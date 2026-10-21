@@ -112,3 +112,315 @@
 // export default router;
 
 
+import { Router } from "express";
+import mongoose from "mongoose";
+import Question from "../models/Question.js";
+import Interview from "../models/Interview.js";
+import Job from "../models/Job.js";
+import { authenticate, authorize } from "../middleware/auth.js";
+import { asyncHandler } from "../utils/asyncHandler.js";
+import { httpError } from "../utils/httpError.js";
+import {
+  assertInterviewActive,
+  requireOwnerOrAdmin,
+} from "../utils/permissions.js";
+import { executeCode } from "../services/judge0Service.js";
+import { codeFollowUp } from "../services/aiService.js";
+
+const router = Router();
+
+// Authentication is applied to each actual endpoint below.
+// Unknown /api paths can now reach the global 404 handler.
+
+router.get(
+  "/coding/problems",
+  authenticate,
+  asyncHandler(async (req, res) => {
+    const filter = { type: "coding" };
+
+    if (req.user.role !== "admin") {
+      const assigned = await Interview.find({
+        user: req.user.id,
+      }).distinct("job");
+
+      filter.job = { $in: assigned };
+    }
+
+    const questions = await Question.find(filter)
+      .populate("job", "title")
+      .sort({ createdAt: -1 })
+      .lean();
+
+    res.json({
+      success: true,
+      problems: questions.map((q) => ({
+        id: String(q._id),
+        job: q.job,
+        prompt: q.prompt,
+        difficulty: q.difficulty,
+        languageIds: q.languageIds,
+        starterCode: q.starterCode,
+        // Do not expose hidden test inputs or expected outputs.
+        testCases: q.testCases.map((t) => ({
+          hidden: Boolean(t.hidden),
+        })),
+      })),
+    });
+  })
+);
+
+router.post(
+  "/coding/problems",
+  authenticate,
+  authorize("admin"),
+  asyncHandler(async (req, res) => {
+    const { jobId, prompt } = req.body;
+
+    if (
+      !mongoose.isValidObjectId(jobId) ||
+      typeof prompt !== "string" ||
+      !prompt.trim()
+    ) {
+      throw httpError(400, "jobId and prompt are required");
+    }
+
+    const job = await Job.findById(jobId);
+    if (!job) throw httpError(404, "Job not found");
+
+    const languageIds = Array.isArray(req.body.languageIds)
+      ? req.body.languageIds.map(Number)
+      : [63];
+
+    if (
+      !languageIds.every(
+        (id) => Number.isInteger(id) && id > 0
+      )
+    ) {
+      throw httpError(400, "languageIds must contain valid positive integers");
+    }
+
+    const question = await Question.create({
+      job: jobId,
+      type: "coding",
+      prompt: prompt.trim(),
+      difficulty: req.body.difficulty || "medium",
+      languageIds,
+      starterCode: req.body.starterCode || "",
+      expectedSignals: Array.isArray(req.body.expectedSignals)
+        ? req.body.expectedSignals
+        : [],
+      testCases: Array.isArray(req.body.testCases)
+        ? req.body.testCases.map((t) => ({
+            input: String(t.input ?? ""),
+            expectedOutput: String(t.expectedOutput ?? ""),
+            hidden: Boolean(t.hidden),
+          }))
+        : [],
+      createdBy: req.user.id,
+    });
+
+    res.status(201).json({
+      success: true,
+      problem: {
+        id: String(question._id),
+        prompt: question.prompt,
+      },
+    });
+  })
+);
+
+export async function submitCodeHandler(req, res) {
+  if (!mongoose.isValidObjectId(req.params.id)) {
+    throw httpError(400, "Invalid interview id");
+  }
+
+  const interview = await Interview.findById(req.params.id);
+  if (!interview) throw httpError(404, "Interview not found");
+
+  requireOwnerOrAdmin(interview.user, req.user);
+
+  if (req.user.role !== "user") {
+    throw httpError(403, "Candidate account required");
+  }
+
+  assertInterviewActive(interview);
+
+  if (interview.interviewType !== "coding") {
+    throw httpError(400, "This is not a coding interview");
+  }
+
+  const { problemId, languageId, sourceCode } = req.body;
+
+  if (
+    !mongoose.isValidObjectId(problemId) ||
+    !Number.isInteger(Number(languageId)) ||
+    !Number.isFinite(Number(languageId)) ||
+    typeof sourceCode !== "string" ||
+    !sourceCode.trim()
+  ) {
+    throw httpError(
+      400,
+      "problemId, languageId and sourceCode are required"
+    );
+  }
+
+  if (sourceCode.length > 30000) {
+    throw httpError(413, "Source code exceeds 30KB");
+  }
+
+  const problem = await Question.findOne({
+    _id: problemId,
+    job: interview.job,
+    type: "coding",
+  });
+
+  if (!problem) {
+    throw httpError(404, "Coding problem not found for this job");
+  }
+
+  if (
+    problem.languageIds.length &&
+    !problem.languageIds.includes(Number(languageId))
+  ) {
+    throw httpError(400, "Language is not allowed for this problem");
+  }
+
+  const cases = problem.testCases.length
+    ? problem.testCases.slice(0, 20)
+    : [{ input: "", expectedOutput: "", hidden: false }];
+
+  const allResults = [];
+
+  for (const testCase of cases) {
+    const result = await executeCode({
+      sourceCode,
+      languageId: Number(languageId),
+      stdin: testCase.input,
+      expectedOutput: testCase.expectedOutput,
+    });
+
+    allResults.push({
+      hidden: Boolean(testCase.hidden),
+      status: result.status,
+      passed: result.passed,
+      stdout: result.stdout,
+      stderr: result.stderr,
+      compileOutput: result.compileOutput,
+      time: result.time,
+      memory: result.memory,
+    });
+  }
+
+  const total = allResults.length;
+  const passed = allResults.filter((result) => result.passed).length;
+  const pending = allResults.some(
+    (result) => result.status === "processing"
+  );
+
+  // Only visible test results are returned to the candidate.
+  const publicResults = allResults
+    .filter((result) => !result.hidden)
+    .map(({ hidden, ...result }) => result);
+
+  const submission = {
+    problemId: problem._id,
+    languageId: Number(languageId),
+    sourceCode,
+    status: pending
+      ? "processing"
+      : passed === total
+        ? "accepted"
+        : "failed",
+    passed,
+    total,
+    results: publicResults,
+    feedback: `${passed}/${total} total test cases passed. Hidden test details are withheld.`,
+  };
+
+  interview.submissions.push(submission);
+
+  interview.transcript.push({
+    speaker: "system",
+    text: `Coding submission: ${submission.status}, ${passed}/${total} total test cases passed.`,
+  });
+
+  await interview.save();
+
+  const saved = interview.submissions.at(-1);
+
+  res.status(201).json({
+    success: true,
+    submission: {
+      id: String(saved._id),
+      problemId: String(problem._id),
+      status: saved.status,
+      passed: saved.passed,
+      total: saved.total,
+      results: publicResults,
+      feedback: saved.feedback,
+    },
+  });
+}
+
+router.post(
+  "/interviews/:id/code/submit",
+  authenticate,
+  asyncHandler(submitCodeHandler)
+);
+
+router.post(
+  "/interviews/:id/code/follow-up",
+  authenticate,
+  asyncHandler(async (req, res) => {
+    if (!mongoose.isValidObjectId(req.params.id)) {
+      throw httpError(400, "Invalid interview id");
+    }
+
+    const interview = await Interview.findById(req.params.id);
+    if (!interview) throw httpError(404, "Interview not found");
+
+    requireOwnerOrAdmin(interview.user, req.user);
+
+    if (req.user.role !== "user") {
+      throw httpError(403, "Candidate account required");
+    }
+
+    assertInterviewActive(interview);
+
+    const submission = interview.submissions.id(req.body.submissionId);
+    if (!submission) throw httpError(404, "Submission not found");
+
+    const [job, question] = await Promise.all([
+      Job.findById(interview.job),
+      Question.findById(submission.problemId),
+    ]);
+
+    const followUp = await codeFollowUp({
+      job,
+      question,
+      sourceCode: submission.sourceCode,
+      resultSummary: {
+        status: submission.status,
+        passed: submission.passed,
+        total: submission.total,
+        feedback: submission.feedback,
+      },
+    });
+
+    submission.feedback = `${submission.feedback}\n${followUp.feedback}`;
+
+    interview.transcript.push({
+      speaker: "interviewer",
+      text: followUp.followUpQuestions.join("\n"),
+    });
+
+    await interview.save();
+
+    res.json({
+      success: true,
+      followUp,
+    });
+  })
+);
+
+export default router;
