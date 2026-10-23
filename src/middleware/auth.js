@@ -8,8 +8,9 @@ export async function authenticate(req, _res, next) {
     if (scheme !== "Bearer" || !token) throw httpError(401, "Authentication required");
     if (!process.env.JWT_SECRET) throw new Error("JWT_SECRET is not configured");
     const payload = jwt.verify(token, process.env.JWT_SECRET);
-    const user = await User.findById(payload.sub).select("_id name username email role");
+    const user = await User.findById(payload.sub).select("_id name username email role tokenVersion");
     if (!user) throw httpError(401, "Account no longer exists");
+    if (Number(payload.ver || 0) !== user.tokenVersion) throw httpError(401, "Session has expired. Please log in again.");
     req.user = { id: String(user._id), name: user.name, username: user.username, email: user.email, role: user.role };
     next();
   } catch (error) {

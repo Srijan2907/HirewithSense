@@ -33,7 +33,11 @@ All routes are prefixed `/api`. Send `Authorization: Bearer <token>` to protecte
 ### Auth
 - `POST /auth/register` `{name, username, email, password}`
 - `POST /auth/login` `{email, password}`
+- `POST /auth/forgot-password` `{email}` sends a one-time reset link without revealing whether the email is registered.
+- `POST /auth/reset-password` `{token, password}` consumes the reset link; tokens expire after 30 minutes.
 - `GET /auth/me`
+
+Password reset emails use SMTP. Configure `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`, `SMTP_USER`, `SMTP_PASS`, `SMTP_FROM`, and `PASSWORD_RESET_URL` in `.env`. The reset token is stored only as a SHA-256 hash, can be used once, and resetting the password revokes existing JWT sessions.
 
 ### Profile and resume
 - `GET /users/me`
@@ -91,8 +95,11 @@ Judge0 language IDs are provider-specific. Common Judge0 CE IDs include JavaScri
 - `POST /ai/interviews/:id/question` generates an interviewer question from the candidate's parsed resume and role.
 - `POST /ai/interviews/:id/evaluate` evaluates a supplied answer.
 - `POST /voice/session-config` returns non-secret browser connection configuration and a readiness flag.
+- `POST /interviews/:id/voice/session-config` allocates temporary Qwen AOQ credentials for the authenticated candidate's active interview. The permanent API key stays on the server.
 
-**Voice note:** this backend provides the session configuration boundary and transcript ingestion. Real-time Qwen audio streaming protocols/model identifiers can differ by region and API release. Do not expose the provider API key to the browser. Implement the official WebSocket/realtime handshake in a server-side adapter after confirming the exact model ID and protocol in your Alibaba Cloud console/docs. For the demo, browser speech APIs can supply audio/transcript events to the transcript endpoint while the Qwen adapter is finalized.
+Provider roles: OpenAI handles interviewer questions, answer evaluation, final reports, and coding follow-ups; Gemini Flash parses resumes; Qwen LiveTranslate handles realtime voice. Configure `OPENAI_API_KEY` and `OPENAI_MODEL`, `GEMINI_API_KEY` and `GEMINI_RESUME_MODEL`, plus `QWEN_API_KEY`, `QWEN_WORKSPACE_ID`, and `QWEN_REGION` (`singapore` or `beijing`).
+
+The frontend should use the returned temporary AOQ credentials with Alibaba Cloud's AOQ client SDK, wait for `session.updated` before sending microphone audio, then append recognized/interviewer text to `/interviews/:id/transcript`. Stop audio capture at `endsAt` and finish the interview. Never send provider API keys to the browser.
 
 ## Security notes
 - JWT secret must be long and private.

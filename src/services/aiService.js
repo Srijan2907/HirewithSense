@@ -1,15 +1,12 @@
 import OpenAI from "openai";
 
 function getClient() {
-  if (!process.env.QWEN_API_KEY) return null;
-  return new OpenAI({
-    apiKey: process.env.QWEN_API_KEY,
-    baseURL: process.env.QWEN_BASE_URL || "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
-  });
+  if (!process.env.OPENAI_API_KEY) return null;
+  return new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 }
-export function aiReady() { return Boolean(process.env.QWEN_API_KEY); }
+export function aiReady() { return Boolean(process.env.OPENAI_API_KEY); }
 
-export async function chatJSON(system, user, model = process.env.QWEN_TEXT_MODEL || "qwen-plus") {
+export async function chatJSON(system, user, model = process.env.OPENAI_MODEL || "gpt-4.1-mini") {
   const client = getClient();
   if (!client) return null;
   const result = await client.chat.completions.create({

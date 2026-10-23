@@ -7,6 +7,8 @@ Use `Authorization: Bearer <JWT>` on protected endpoints. JSON body unless marke
 | GET | `/api/health` | Public | Health |
 | POST | `/api/auth/register` | Public | Candidate signup |
 | POST | `/api/auth/login` | Public | Login |
+| POST | `/api/auth/forgot-password` | Public, rate limited | Send a one-time password reset link when the email is registered |
+| POST | `/api/auth/reset-password` | Public, rate limited | Reset password using the emailed token |
 | GET | `/api/auth/me` | Authenticated | Current identity |
 | GET/PATCH | `/api/users/me` | Authenticated | Profile |
 | POST | `/api/resumes` | User | Multipart `resume` upload |
@@ -36,7 +38,8 @@ Use `Authorization: Bearer <JWT>` on protected endpoints. JSON body unless marke
 | GET | `/api/admin/jobs/:jobId/rankings` | Admin | Role ranking |
 | POST | `/api/ai/interviews/:id/question` | Owner/Admin | AI question |
 | POST | `/api/ai/interviews/:id/evaluate` | Owner/Admin | Evaluate answer |
-| GET | `/api/ai/status` | Authenticated | AI readiness |
+| GET | `/api/ai/status` | Authenticated | OpenAI, Gemini, and Qwen readiness |
 | POST | `/api/ai/voice/session-config` | Authenticated | Safe voice adapter config |
+| POST | `/api/ai/interviews/:id/voice/session-config` | Candidate, own active interview | Allocate temporary Qwen AOQ voice credentials |
 
 Admin-only routes must use the role created by the secure seed script. Do not add `role` to public registration input.
