@@ -1,6 +1,7 @@
 {
   "name": "hirewithsenseai-backend",
   "version": "1.0.0",
+   "author": "Gautam Kapoor, Srijan Jaiswal",
   "private": true,
   "type": "module",
   "scripts": {
