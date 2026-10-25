@@ -45,11 +45,12 @@ exported for bias audits, and data is purged on a per-organization retention sch
 - Accept an invitation, create an account in a minute, upload a resume (PDF, DOCX or TXT) that is
   parsed into a structured profile.
 - A lobby with a device check and the AI-disclosure notice; an accommodation request field.
-- An interview room that streams the interviewer's questions, supports dictation and read-aloud in
-  the browser, keeps a live transcript, and shows a clear timer.
+- An interview room that streams the interviewer's questions, supports dictation and read-aloud
+  (server-side when audio models are configured, in the browser otherwise), keeps a live transcript,
+  and shows a clear timer.
 - A coding room with Monaco, several languages, run-samples with custom input, and asynchronous
   grading with locked hidden cases.
-- Control over their data: sessions, password, and account deletion.
+- Control over their data: sessions, password, a one-click export of everything held about them, and account deletion.
 
 **Under the hood**
 
@@ -184,9 +185,10 @@ scaling notes and the runner trade-offs are in [docs/DEPLOYMENT.md](docs/DEPLOYM
 Version 2 is a complete rewrite of the original MVP. The API has an integration test suite that
 walks the full journey from job creation to a recorded decision, the sandbox has its own tests,
 both Docker images build in CI, and the candidate and recruiter flows have been exercised end to end
-in a browser. Known gaps: server-side speech endpoints exist but the UI uses browser speech only;
-there is no per-candidate data export endpoint yet; and the recruiter code viewer identifies
-problems by id rather than title.
+in a browser. Candidates can download a complete export of their data, and the interview room uses
+server-side transcription and speech when the API has audio enabled, falling back to the browser's
+speech engines otherwise. Known gap: the recruiter code viewer identifies problems by id rather
+than title.
 
 ## License
 

@@ -94,3 +94,20 @@ describe('candidate account deletion', () => {
     expect(login.statusCode).toBe(401);
   });
 });
+
+describe('candidate data export', () => {
+  it('returns everything about the signed-in candidate and nothing about others', async () => {
+    const a = await registerCandidate(app, 24);
+    const b = await registerCandidate(app, 25);
+    const res = await app.inject({ method: 'GET', url: '/api/v1/users/me/export', headers: auth(a) });
+    expect(res.statusCode).toBe(200);
+    expect(res.headers['content-disposition']).toContain('attachment');
+    const body = JSON.parse(res.body);
+    expect(body.format).toBe('hirewithsense.candidate-export.v1');
+    expect(body.account.email).toBe(a.user.email);
+    expect(res.body).not.toContain(b.user.email);
+    expect(Array.isArray(body.interviews)).toBe(true);
+    expect(Array.isArray(body.accountEvents)).toBe(true);
+    expect(body.resumes).toEqual([]);
+  });
+});

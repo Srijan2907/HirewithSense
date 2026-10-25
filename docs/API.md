@@ -175,8 +175,12 @@ profile is produced by a background job and `parseStatus` moves through `pending
 
 ## Users
 
-`GET/PATCH /users/me` for the profile and `POST /users/me/delete` for candidate-initiated erasure
-(see [COMPLIANCE.md](COMPLIANCE.md)).
+`GET/PATCH /users/me` for the profile, `GET /users/me/export` for a self-service copy of everything
+the platform holds about the signed-in candidate (a JSON attachment: account, resumes with parsed
+profiles and extracted text, every interview with questions, answers, evaluations, transcript,
+code submissions, interface events, consent records, report and decision, plus account events),
+and `POST /users/me/delete` for candidate-initiated erasure (see [COMPLIANCE.md](COMPLIANCE.md)).
+Exports are rate limited to five per minute and write an audit entry.
 
 ## AI and operations
 

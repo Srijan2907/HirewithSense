@@ -64,11 +64,16 @@ summary of the latest audit.
 
 ## Data access and explanation
 
-Everything the system holds about an interview is visible to the employer on the interview detail
-page, including which provider and model produced the report and how much evidence it saw. That
-page, plus the audit log, is what you would use to answer a candidate's request for a copy of their
-data or an explanation of how the report was produced. A per-candidate export endpoint is a natural
-next step if your jurisdiction requires self-service access.
+Candidates can download everything the platform holds about them from their profile page
+("Download my data"), without asking anyone: account details, resumes and parsed profiles, every
+interview with its questions, answers, per-answer evaluations, transcript, submitted code and test
+results, interface events, consent records, the report and the recorded decision, and a list of
+account events. The export is a JSON file in a documented shape
+(`hirewithsense.candidate-export.v1`) and each download is itself recorded in the audit log.
+
+Employers see the same information on the interview detail page, including which provider and
+model produced the report and how much evidence it saw, which is what you would use to explain how
+a report was produced.
 
 ## What the software does not do
 

@@ -4,11 +4,11 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { useNavigate } from 'react-router';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { AlertTriangle, FileText, Laptop, RefreshCw, Trash2, Upload } from 'lucide-react';
+import { AlertTriangle, Download, FileText, Laptop, RefreshCw, Trash2, Upload } from 'lucide-react';
 import { ChangePasswordBody, UpdateProfileBody, type CandidateProfile, type PublicUser, type ResumeDto, type SessionDto } from '@hws/shared';
 import { z } from 'zod';
 import { Button, Card, CardContent, CardDescription, CardHeader, CardTitle, Dialog, DialogContent, DialogFooter, Field, Input, Skeleton, StatusBadge } from '@/components/ui';
-import { del, get, logout, patch, post } from '@/lib/api';
+import { api, del, get, logout, patch, post } from '@/lib/api';
 import { useAuth } from '@/lib/auth-store';
 import { useDocumentTitle } from '@/lib/hooks';
 import { errorMessage, qk, queryClient } from '@/lib/query';
@@ -343,6 +343,43 @@ function SecuritySection({ email }: { email: string }) {
   );
 }
 
+function DataExportSection() {
+  const [busy, setBusy] = useState(false);
+  const download = async () => {
+    setBusy(true);
+    try {
+      const res = await api<Response>('/users/me/export', { method: 'GET', raw: true });
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = res.headers.get('content-disposition')?.match(/filename="([^"]+)"/)?.[1] ?? 'hirewithsense-export.json';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      toast.success('Your data export has been downloaded.');
+    } catch (err) {
+      toast.error(errorMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Your data</CardTitle>
+        <CardDescription>Download everything HireWithSense holds about you: your profile, resumes, every interview with its questions, answers, code, evaluations and reports, your consent records, and account events. The file is JSON.</CardDescription>
+      </CardHeader>
+      <CardContent>
+        <Button variant="outline" onClick={download} loading={busy}>
+          <Download /> Download my data
+        </Button>
+      </CardContent>
+    </Card>
+  );
+}
+
 export default function ProfilePage() {
   useDocumentTitle('Profile & resume');
   const me = useQuery({ queryKey: qk.me, queryFn: () => get<Me>('/users/me') });
@@ -378,7 +415,10 @@ export default function ProfilePage() {
           <ResumeSection />
         </>
       ) : me.data ? (
-        <SecuritySection email={me.data.email} />
+        <>
+          <DataExportSection />
+          <SecuritySection email={me.data.email} />
+        </>
       ) : (
         <Skeleton className="h-40" />
       )}

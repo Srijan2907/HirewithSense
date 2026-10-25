@@ -3,7 +3,7 @@ import { useNavigate, useParams } from 'react-router';
 import { useQuery } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { Bot, CheckCircle2, Mic, MicOff, SkipForward, Volume2, VolumeX, Send, MessageSquareText } from 'lucide-react';
-import type { CandidateTurnDto, InterviewDto, InterviewRoomState, QuestionStreamEvent } from '@hws/shared';
+import type { AiStatusDto, CandidateTurnDto, InterviewDto, InterviewRoomState, QuestionStreamEvent } from '@hws/shared';
 import { Badge, Button, Card, Dialog, DialogContent, DialogFooter, PageLoader, Progress, Switch, Tooltip } from '@/components/ui';
 import { get, isApiError, post, streamSse } from '@/lib/api';
 import { errorMessage, qk, queryClient } from '@/lib/query';
@@ -11,7 +11,7 @@ import { useDocumentTitle } from '@/lib/hooks';
 import { cn, fmtDuration } from '@/lib/utils';
 import { InterviewHeader, routeAfterSection } from './InterviewHeader';
 import { ProctoringNotice, useProctoring } from './useProctoring';
-import { createRecognition, speak, speechRecognitionSupported, speechSynthesisSupported, stopSpeaking, type SpeechRecognitionLike } from './speech';
+import { ServerRecorder, createRecognition, mediaRecorderSupported, speak, speakViaServer, speechRecognitionSupported, speechSynthesisSupported, stopAllSpeech, type SpeechRecognitionLike } from './speech';
 
 type InterviewerState = 'idle' | 'thinking' | 'speaking' | 'listening';
 
@@ -28,6 +28,18 @@ export default function InterviewRoomPage() {
     staleTime: 0,
     meta: { silent: true },
   });
+
+  // Server-side speech is used when the API has audio models configured; the browser's own
+  // SpeechRecognition / speechSynthesis are the fallback.
+  const aiStatus = useQuery({ queryKey: qk.aiStatus, queryFn: () => get<AiStatusDto>('/ai/status'), staleTime: 5 * 60_000, meta: { silent: true } });
+  const serverTts = Boolean(aiStatus.data?.features.speech);
+  const serverStt = Boolean(aiStatus.data?.features.transcription) && mediaRecorderSupported();
+  const say = useCallback((text: string, onEnd?: () => void) => {
+    if (serverTts) void speakViaServer(text, onEnd);
+    else speak(text, onEnd);
+  }, [serverTts]);
+  const recorder = useRef<ServerRecorder | null>(null);
+  const [transcribing, setTranscribing] = useState(false);
 
   const [interview, setInterview] = useState<InterviewDto | null>(null);
   const [turns, setTurns] = useState<CandidateTurnDto[]>([]);
@@ -160,12 +172,13 @@ export default function InterviewRoomPage() {
     if (!voiceMode || !openTurn || lastSpoken.current === openTurn.id) return;
     lastSpoken.current = openTurn.id;
     setState('speaking');
-    speak(openTurn.question, () => setState(listening ? 'listening' : 'idle'));
-  }, [voiceMode, openTurn, listening]);
+    say(openTurn.question, () => setState(listening ? 'listening' : 'idle'));
+  }, [voiceMode, openTurn, listening, say]);
 
   useEffect(() => () => {
-    stopSpeaking();
+    stopAllSpeech();
     recognition.current?.abort();
+    recorder.current?.abort();
   }, []);
 
   useEffect(() => {
@@ -177,15 +190,40 @@ export default function InterviewRoomPage() {
     recognition.current = null;
     setListening(false);
     setState('idle');
+    const rec = recorder.current;
+    if (rec) {
+      recorder.current = null;
+      setTranscribing(true);
+      rec
+        .stop()
+        .then((text) => {
+          if (text) setAnswer((a) => (a.trimEnd() ? a.trimEnd() + ' ' + text : text));
+          else toast.message('No speech was detected.');
+        })
+        .catch((err) => toast.error(errorMessage(err)))
+        .finally(() => setTranscribing(false));
+    }
   }, []);
 
   const startListening = useCallback(() => {
-    const r = createRecognition();
-    if (!r) {
-      toast.error('Voice input needs Chrome or Edge.');
+    stopAllSpeech();
+    if (serverStt) {
+      const rec = new ServerRecorder();
+      rec
+        .start()
+        .then(() => {
+          recorder.current = rec;
+          setListening(true);
+          setState('listening');
+        })
+        .catch(() => toast.error('Microphone access was denied.'));
       return;
     }
-    stopSpeaking();
+    const r = createRecognition();
+    if (!r) {
+      toast.error('Voice input needs Chrome or Edge, or a server with transcription enabled.');
+      return;
+    }
     finalTranscript.current = answer ? answer.trimEnd() + ' ' : '';
     r.onresult = (e) => {
       let interim = '';
@@ -218,13 +256,13 @@ export default function InterviewRoomPage() {
     setListening(true);
     setState('listening');
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [answer]);
+  }, [answer, serverStt]);
 
   const submit = useCallback(async () => {
     if (!openTurn || !answer.trim() || submitting) return;
     setSubmitting(true);
     if (listening) stopListening();
-    stopSpeaking();
+    stopAllSpeech();
     const duration = Math.round((Date.now() - shownAt.current) / 1000);
     try {
       const saved = await post<CandidateTurnDto>(`/interviews/${id}/answers`, { turnId: openTurn.id, answer: answer.trim(), inputMode: voiceMode ? 'voice' : 'text', answerDurationSeconds: duration });
@@ -249,7 +287,7 @@ export default function InterviewRoomPage() {
     if (!openTurn) return;
     setConfirmSkip(false);
     setSubmitting(true);
-    stopSpeaking();
+    stopAllSpeech();
     try {
       const saved = await post<CandidateTurnDto>(`/interviews/${id}/skip`, { turnId: openTurn.id });
       setTurns((ts) => ts.map((t) => (t.id === saved.id ? saved : t)));
@@ -321,12 +359,12 @@ export default function InterviewRoomPage() {
                 onCheckedChange={(v) => {
                   setVoiceMode(v);
                   if (!v) {
-                    stopSpeaking();
+                    stopAllSpeech();
                     if (listening) stopListening();
                   } else if (openTurn) {
                     lastSpoken.current = openTurn.id;
                     setState('speaking');
-                    speak(openTurn.question, () => setState('idle'));
+                    say(openTurn.question, () => setState('idle'));
                   }
                 }}
                 aria-label="Voice mode"
@@ -341,7 +379,7 @@ export default function InterviewRoomPage() {
                   disabled={!speechSynthesisSupported()}
                   onClick={() => {
                     setState('speaking');
-                    speak(openTurn.question, () => setState(listening ? 'listening' : 'idle'));
+                    say(openTurn.question, () => setState(listening ? 'listening' : 'idle'));
                   }}
                 >
                   {state === 'speaking' ? <VolumeX /> : <Volume2 />} Repeat question
@@ -393,10 +431,11 @@ export default function InterviewRoomPage() {
                 <Button onClick={() => void submit()} disabled={!openTurn || !answer.trim()} loading={submitting}>
                   <Send /> Submit answer
                 </Button>
-                <Tooltip content={speechRecognitionSupported() ? (listening ? 'Stop listening' : 'Dictate your answer') : 'Voice input needs Chrome or Edge'}>
+                <Tooltip content={serverStt || speechRecognitionSupported() ? (listening ? (serverStt ? 'Stop and transcribe' : 'Stop listening') : 'Dictate your answer') : 'Voice input needs Chrome or Edge'}>
                   <Button
                     variant={listening ? 'danger' : 'outline'}
-                    disabled={!openTurn || !speechRecognitionSupported() || submitting}
+                    disabled={!openTurn || !(serverStt || speechRecognitionSupported()) || submitting || transcribing}
+                    loading={transcribing}
                     onClick={() => {
                       if (listening) stopListening();
                       else {

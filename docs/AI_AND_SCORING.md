@@ -85,9 +85,10 @@ other than OpenAI a base URL:
 
 The provider must support JSON-mode responses (`response_format: json_object`) for the structured
 tasks and streaming for question generation. All of the above do. Server-side speech features use
-OpenAI's audio endpoints and are enabled with `AI_ENABLE_AUDIO=true`; the web app otherwise relies
-on the browser's own speech recognition and synthesis, which costs nothing and keeps audio on the
-candidate's device.
+OpenAI's audio endpoints and are enabled with `AI_ENABLE_AUDIO=true`; the interview room then
+records answers and transcribes them on the server and reads questions aloud with the configured
+voice, which works in every browser. Otherwise the web app relies on the browser's own speech
+recognition and synthesis, which costs nothing and keeps audio on the candidate's device.
 
 ### The offline provider
 

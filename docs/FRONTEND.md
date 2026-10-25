@@ -47,9 +47,12 @@ consent tabs plus the decision panel; organization settings; integration status.
 
 `features/interview/InterviewRoomPage.tsx` is the most involved screen. It fetches the room state,
 reuses an unanswered question if one exists, otherwise opens the question stream and renders tokens
-as they arrive. Answers can be typed or dictated; dictation uses the browser's `SpeechRecognition`
-when available (Chrome and Edge) and degrades to text elsewhere. With voice mode on, each new
-question is read aloud with `speechSynthesis`. The composer records how long the candidate took,
+as they arrive. Answers can be typed or dictated. When the API reports server-side audio
+(`AI_ENABLE_AUDIO=true`), dictation records the microphone with `MediaRecorder` and sends the clip
+to `/ai/transcribe` when the candidate stops, which works in every modern browser; questions are
+read aloud through `/ai/speak`. Without server audio the room uses the browser's own
+`SpeechRecognition` (Chrome and Edge) and `speechSynthesis`, and degrades to text elsewhere. The
+helpers for both paths are in `features/interview/speech.ts`. The composer records how long the candidate took,
 the proctoring hook records focus, visibility, full-screen and paste events and sends them in
 batches, and a countdown corrected for clock skew (the API returns its own time) drives the header.
 A 410 from any write means the section's time is up; the page completes the section and routes to
