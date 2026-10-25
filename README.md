@@ -1,117 +1,193 @@
-# HireWithSenseAI Backend
+# HireWithSense
 
-MVP backend for a MERN AI interview platform. Includes JWT auth, User/Admin roles,
-resume upload and parsing, job roles and weighted rubrics, interview sessions capped
-at 30 minutes, transcript/answer storage, AI-generated questions and reports, Judge0
-code execution, admin rankings, and API tests.
+**AI-assisted technical interviews with a person in charge.**
 
-## Requirements
-- Node.js 20+
-- MongoDB local or Atlas
-- Optional Qwen-compatible API credentials for live AI text features
-- Optional Judge0-compatible API credentials for real code execution
+HireWithSense runs the first-round technical interview that recruiting teams otherwise struggle to
+schedule: an AI interviewer asks questions grounded in the job description and the candidate's
+resume, the candidate answers by voice or text, then solves coding problems in a real in-browser IDE
+whose submissions are graded against hidden test cases in an isolated sandbox. Recruiters receive a
+report that scores each competency in the job's rubric and quotes the evidence behind every score,
+alongside a separate panel of integrity signals. The software never makes a hiring decision; a
+recruiter reads the report and records one, with a reason.
 
-## Install
+The platform is built for the regulatory reality of automated hiring tools: candidates see and
+accept a versioned AI-disclosure notice before they start, evaluation is restricted to job-related
+content with personal identifiers redacted, every sensitive action is audited, scores can be
+exported for bias audits, and data is purged on a per-organization retention schedule.
+
+## Contents
+
+- [What's in the box](#whats-in-the-box)
+- [Architecture at a glance](#architecture-at-a-glance)
+- [Install and run from a fresh clone](#install-and-run-from-a-fresh-clone)
+- [Demo accounts](#demo-accounts)
+- [Configuration](#configuration)
+- [Deploying](#deploying)
+- [Documentation](#documentation)
+- [Project status](#project-status)
+
+## What's in the box
+
+**For recruiters**
+
+- Jobs with a weighted competency rubric (behaviourally anchored levels optional), a question bank
+  with expected signals and follow-up hints, and coding problems with sample and hidden test cases.
+- Interview plans made of ordered sections (conversation, coding) with their own timers.
+- Email invitations, single or bulk, that double as secure sign-in links for candidates.
+- A review workspace per interview: report, question-by-question answers with per-answer
+  evaluations, submitted code with the full test matrix, transcript, integrity timeline, consent
+  record and audit entries, plus the decision form.
+- Rankings per job with per-competency columns and CSV export; an organization dashboard.
+- Organization membership with owner, admin and member roles.
+
+**For candidates**
+
+- Accept an invitation, create an account in a minute, upload a resume (PDF, DOCX or TXT) that is
+  parsed into a structured profile.
+- A lobby with a device check and the AI-disclosure notice; an accommodation request field.
+- An interview room that streams the interviewer's questions, supports dictation and read-aloud in
+  the browser, keeps a live transcript, and shows a clear timer.
+- A coding room with Monaco, several languages, run-samples with custom input, and asynchronous
+  grading with locked hidden cases.
+- Control over their data: sessions, password, and account deletion.
+
+**Under the hood**
+
+- Fastify 5 API in TypeScript on PostgreSQL, with every request and response described by Zod
+  schemas shared with the frontend and published as OpenAPI.
+- Rotating refresh tokens with reuse detection, account lockout, rate limiting, request ids,
+  structured logs and Prometheus metrics.
+- Background jobs on pg-boss (resume parsing, grading, report generation, email, deadline sweeps,
+  retention purge) with no additional infrastructure.
+- A model-agnostic AI layer: any OpenAI-compatible endpoint, or a deterministic offline provider so
+  the whole product runs without credentials.
+- Pluggable code execution: a Docker sandbox with no network and hard resource limits, a Judge0
+  adapter for hosted setups, and a development-only local runner.
+- React 19 + Vite + Tailwind 4 frontend with light and dark themes.
+
+## Architecture at a glance
+
+```
+┌──────────────┐   HTTPS    ┌──────────────────────┐          ┌──────────────┐
+│  Web (React) │ ─────────▶ │  API (Fastify)       │ ───────▶ │  PostgreSQL  │
+│  nginx image │  /api, SSE │  auth · jobs ·       │          │  + pg-boss   │
+└──────────────┘            │  interviews · coding │          └──────────────┘
+                            │  reports · jobs      │
+                            └──────┬───────┬───────┘
+                                   │       │
+                     OpenAI-compatible   Docker sandbox / Judge0
+                     model endpoint      (code execution)
+```
+
+A deeper description, including the data model and the interview state machine, is in
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+
+## Install and run from a fresh clone
+
+You need **Node.js 24** (22.12 or newer also works), **pnpm 10** and a **PostgreSQL** server. Docker
+is optional but recommended: it is the easiest way to get Postgres and it powers the coding sandbox.
+
 ```bash
-cp .env.example .env
-npm install
-# edit .env and set MONGO_URL and JWT_SECRET
-npm run dev
-```
-Health check: `GET http://localhost:4000/api/health`
+# 1. Get the code
+git clone git@github.com:gautamkapoor1709/HirewithSense.git
+cd HirewithSense
 
-## Create first admin
-Set `ADMIN_NAME`, `ADMIN_EMAIL`, and `ADMIN_PASSWORD` in `.env`, then run:
+# 2. Use the right Node and install dependencies
+nvm use                      # reads .nvmrc (or: nvm install 24)
+corepack enable && corepack prepare pnpm@10.33.0 --activate
+pnpm install
+
+# 3. Start a database (port 5433 avoids clashing with a local Postgres)
+docker run -d --name hws-postgres \
+  -e POSTGRES_USER=hws -e POSTGRES_PASSWORD=hws -e POSTGRES_DB=hirewithsense \
+  -p 5433:5432 postgres:16-alpine
+
+# 4. Configure the API, then set JWT_SECRET to any 32+ character string
+cp apps/api/.env.example apps/api/.env
+
+# 5. Create the schema and load demo data
+pnpm db:migrate
+pnpm db:seed
+
+# 6. (optional) images for the code sandbox
+./scripts/pull-sandbox-images.sh
+
+# 7. Run everything
+pnpm dev
+```
+
+Open http://localhost:5173 for the app and http://localhost:4000/docs for the interactive API
+reference. Emails are not sent in development; open **Dev mailbox** in the sidebar to click
+invitation and reset links.
+
+The step-by-step version with troubleshooting is in [docs/GETTING_STARTED.md](docs/GETTING_STARTED.md).
+
+### Running the tests
+
 ```bash
-node scripts/seedAdmin.js
+docker exec hws-postgres psql -U hws -d postgres -c "create database hirewithsense_test"
+pnpm test                                        # unit + integration
+TEST_CODE_RUNNER=docker pnpm --filter @hws/api test   # also exercise the sandbox
 ```
-Public registration always creates a `user`, never an admin.
 
-## Main API routes
-All routes are prefixed `/api`. Send `Authorization: Bearer <token>` to protected routes.
+## Demo accounts
 
-### Auth
-- `POST /auth/register` `{name, username, email, password}`
-- `POST /auth/login` `{email, password}`
-- `POST /auth/forgot-password` `{email}` sends a one-time reset link without revealing whether the email is registered.
-- `POST /auth/reset-password` `{token, password}` consumes the reset link; tokens expire after 30 minutes.
-- `GET /auth/me`
+The seed creates an organization called Northwind Labs with one open job (conversation plus a
+two-problem coding round), a draft job, and a candidate whose interview is ready to start. The
+password for both accounts is `DemoPassword123!`.
 
-Password reset emails use SMTP. Configure `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`, `SMTP_USER`, `SMTP_PASS`, `SMTP_FROM`, and `PASSWORD_RESET_URL` in `.env`. The reset token is stored only as a SHA-256 hash, can be used once, and resetting the password revokes existing JWT sessions.
+| Role | Email | Lands on |
+| --- | --- | --- |
+| Recruiter (owner) | `recruiter@demo.hirewithsense.local` | `/recruiter` |
+| Candidate | `candidate@demo.hirewithsense.local` | `/app` |
 
-### Profile and resume
-- `GET /users/me`
-- `PATCH /users/me` `{name, username}`
-- `POST /resumes` multipart form field `resume` (PDF or DOCX, max 5MB)
-- `GET /resumes/me`
-- `POST /resumes/me/parse` parses latest uploaded resume via Qwen if configured, otherwise returns conservative text-based extraction.
+## Configuration
 
-### Jobs and questions (Admin)
-- `POST /jobs` `{title, description, skills, interviewTypes, durationMinutes, rubric, minimumScore}`
-- `GET /jobs` (authenticated; users see active jobs, admins see all)
-- `GET /jobs/:id`
-- `PATCH /jobs/:id`
-- `POST /jobs/:id/questions` `{type, prompt, expectedSignals, difficulty, order}`
-- `GET /jobs/:id/questions`
-- `POST /jobs/:id/assignments` `{userId, interviewType}`
+Everything is configured through environment variables, validated at boot. The defaults in
+`apps/api/.env.example` run entirely offline. The three settings you will change first:
 
-Rubric example:
-```json
-{
-  "technicalKnowledge": 25,
-  "problemSolving": 25,
-  "communication": 15,
-  "projectDepth": 15,
-  "codingCorrectness": 20
-}
-```
-Weights must total 100. For an oral-only role, use codingCorrectness: 0 and adjust other weights.
+| Setting | Options |
+| --- | --- |
+| `AI_PROVIDER` | `mock` (offline, default) or `openai_compatible` with `AI_API_KEY`, `AI_MODEL`, and `AI_BASE_URL` for Gemini, DashScope, Groq, Ollama and others |
+| `CODE_RUNNER` | `docker` (sandbox containers on the API host), `judge0` (hosted), `local` (development only), `none` |
+| `EMAIL_TRANSPORT` | `outbox` (stored in the database, default), `smtp`, `console` |
 
-### Interviews
-- `GET /interviews/mine`
-- `POST /interviews/:id/start` candidate starts an assigned interview
-- `POST /interviews/:id/answers` `{questionId, answer, transcriptChunk?}`
-- `POST /interviews/:id/next-question` `{lastAnswer?}` generates next AI question if configured, otherwise uses configured question bank.
-- `POST /interviews/:id/transcript` `{speaker, text, timestamp?}` appends a transcript segment
-- `POST /interviews/:id/finish` closes session and generates report
-- `GET /interviews/:id` candidate's own session or admin
-- `GET /interviews/:id/report`
+The complete list with explanations is in [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md#environment-reference).
 
-### Coding
-- `GET /coding/problems` authenticated
-- `POST /coding/problems` Admin `{title, statement, difficulty, languageIds, starterCode, testCases, expectedSignals}`
-- `POST /interviews/:id/code/submit` `{problemId, languageId, sourceCode}`
-- `POST /interviews/:id/code/follow-up` `{submissionId}` asks AI for code follow-up questions
+## Deploying
 
-Judge0 language IDs are provider-specific. Common Judge0 CE IDs include JavaScript (Node.js) 63, Python 3 71, C++ 17 54, but verify against your chosen instance. Never expose hidden test inputs in a public endpoint.
-
-### Admin reports
-- `GET /admin/dashboard`
-- `GET /admin/interviews?jobId=&status=`
-- `GET /admin/interviews/:id/transcript`
-- `GET /admin/jobs/:jobId/rankings`
-
-### AI / voice setup
-- `POST /ai/interviews/:id/question` generates an interviewer question from the candidate's parsed resume and role.
-- `POST /ai/interviews/:id/evaluate` evaluates a supplied answer.
-- `POST /voice/session-config` returns non-secret browser connection configuration and a readiness flag.
-- `POST /interviews/:id/voice/session-config` allocates temporary Qwen AOQ credentials for the authenticated candidate's active interview. The permanent API key stays on the server.
-
-Provider roles: OpenAI handles interviewer questions, answer evaluation, final reports, and coding follow-ups; Gemini Flash parses resumes; Qwen LiveTranslate handles realtime voice. Configure `OPENAI_API_KEY` and `OPENAI_MODEL`, `GEMINI_API_KEY` and `GEMINI_RESUME_MODEL`, plus `QWEN_API_KEY`, `QWEN_WORKSPACE_ID`, and `QWEN_REGION` (`singapore` or `beijing`).
-
-The frontend should use the returned temporary AOQ credentials with Alibaba Cloud's AOQ client SDK, wait for `session.updated` before sending microphone audio, then append recognized/interviewer text to `/interviews/:id/transcript`. Stop audio capture at `endsAt` and finish the interview. Never send provider API keys to the browser.
-
-## Security notes
-- JWT secret must be long and private.
-- CORS is restricted to CLIENT_ORIGIN.
-- Passwords are bcrypt-hashed; admin signup is not public.
-- Resume files are stored locally under `uploads/` for development. Use private object storage and malware scanning for production.
-- Candidate code is sent to Judge0, never run inside this API process.
-- AI scores are advisory. Human review should be required before hiring decisions.
-- Add HTTPS, refresh-token rotation, account recovery, retention policies and monitoring before production use.
-
-## Test
 ```bash
-npm test
+cp .env.example .env            # set POSTGRES_PASSWORD, JWT_SECRET, PUBLIC_WEB_URL, and your AI / Judge0 / SMTP keys
+docker compose up -d --build    # Postgres + API + web on http://localhost:8080
 ```
-Tests cover rubric validation, interview duration caps and role access helper behavior without requiring MongoDB.
+
+The web container proxies `/api` to the API, migrations run on boot, and health probes are at
+`/health/live` and `/health/ready`. Put a TLS terminator in front and you are done. Details,
+scaling notes and the runner trade-offs are in [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
+
+## Documentation
+
+| Document | Read it when |
+| --- | --- |
+| [Getting started](docs/GETTING_STARTED.md) | You want a local instance running |
+| [Architecture](docs/ARCHITECTURE.md) | You want to understand the system before changing it |
+| [Development guide](docs/DEVELOPMENT.md) | You are about to write code |
+| [API reference](docs/API.md) | You are integrating with or extending the API |
+| [AI and scoring](docs/AI_AND_SCORING.md) | You want to know how reports are produced and how to use a real model |
+| [Code execution](docs/CODE_EXECUTION.md) | You are setting up or extending the sandbox |
+| [Frontend](docs/FRONTEND.md) | You are working on the web app |
+| [Deployment](docs/DEPLOYMENT.md) | You are putting it on a server |
+| [Compliance](docs/COMPLIANCE.md) | You need to explain consent, retention, audit and fairness features |
+
+## Project status
+
+Version 2 is a complete rewrite of the original MVP. The API has an integration test suite that
+walks the full journey from job creation to a recorded decision, the sandbox has its own tests,
+both Docker images build in CI, and the candidate and recruiter flows have been exercised end to end
+in a browser. Known gaps: server-side speech endpoints exist but the UI uses browser speech only;
+there is no per-candidate data export endpoint yet; and the recruiter code viewer identifies
+problems by id rather than title.
+
+## License
+
+Private. All rights reserved by the HireWithSense authors.

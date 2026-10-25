@@ -1,33 +1,25 @@
 {
-  "name": "hirewithsenseai-backend",
-  "version": "1.0.0",
-   "author": "Gautam Kapoor, Srijan Jaiswal",
+  "name": "hirewithsense",
+  "version": "2.0.0",
   "private": true,
-  "type": "module",
+  "description": "HireWithSense — AI-assisted technical interviewing platform (monorepo)",
+  "packageManager": "pnpm@10.33.0",
+  "engines": { "node": ">=22.12.0" },
   "scripts": {
-    "dev": "nodemon server.js",
-    "start": "node server.js",
-    "test": "NODE_ENV=test node --test",
-    "check": "node --check server.js",
-    "seed:admin": "node scripts/seedAdmin.js"
-  },
-  "dependencies": {
-    "bcryptjs": "^2.4.3",
-    "cors": "^2.8.5",
-    "dotenv": "^16.4.7",
-    "express": "^4.21.2",
-    "express-rate-limit": "^7.5.0",
-    "helmet": "^8.0.0",
-    "jsonwebtoken": "^9.0.2",
-    "mammoth": "^1.9.0",
-    "mongoose": "^8.9.5",
-    "multer": "^2.0.0",
-    "nodemailer": "^10.2.1",
-    "openai": "^4.77.0",
-    "pdf-parse": "^1.1.1"
+    "dev": "pnpm -r --parallel --filter \"./apps/*\" dev",
+    "dev:api": "pnpm --filter @hws/api dev",
+    "dev:web": "pnpm --filter @hws/web dev",
+    "build": "pnpm -r build",
+    "typecheck": "pnpm -r typecheck",
+    "test": "pnpm -r test",
+    "lint": "pnpm -r lint",
+    "format": "prettier --write \"**/*.{ts,tsx,json,md,css}\"",
+    "db:generate": "pnpm --filter @hws/api db:generate",
+    "db:migrate": "pnpm --filter @hws/api db:migrate",
+    "db:seed": "pnpm --filter @hws/api db:seed"
   },
   "devDependencies": {
-    "nodemon": "^3.1.9",
-    "supertest": "^7.0.0"
+    "prettier": "^3.9.10",
+    "typescript": "~5.9.3"
   }
 }

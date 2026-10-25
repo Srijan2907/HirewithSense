@@ -1,0 +1,72 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: hws
+          POSTGRES_PASSWORD: hws
+          POSTGRES_DB: hirewithsense_test
+        ports: ['5433:5432']
+        options: >-
+          --health-cmd "pg_isready -U hws" --health-interval 5s --health-timeout 5s --health-retries 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm --filter @hws/shared test
+      - name: API tests (Postgres service, no sandbox)
+        run: pnpm --filter @hws/api test
+        env:
+          TEST_DATABASE_URL: postgres://hws:hws@localhost:5433/hirewithsense_test
+      - name: Sandbox runner tests (Docker available on GitHub runners)
+        run: |
+          docker pull node:24-alpine && docker pull python:3.12-alpine
+          pnpm --filter @hws/api vitest run test/runner.docker.test.ts
+        env:
+          TEST_CODE_RUNNER: docker
+          TEST_DATABASE_URL: postgres://hws:hws@localhost:5433/hirewithsense_test
+      - run: pnpm --filter @hws/api build
+      - run: pnpm --filter @hws/web build
+
+  docker-images:
+    runs-on: ubuntu-latest
+    needs: verify
+    if: github.event_name == 'push'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build API image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: apps/api/Dockerfile
+          push: false
+          tags: hirewithsense-api:ci
+      - name: Build web image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: apps/web/Dockerfile
+          push: false
+          tags: hirewithsense-web:ci
