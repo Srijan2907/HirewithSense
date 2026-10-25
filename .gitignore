@@ -3,3 +3,4 @@ node_modules/
 uploads/
 coverage/
 .DS_Store
+deploy/judge0/judge0.conf
